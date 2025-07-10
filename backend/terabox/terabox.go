@@ -221,7 +221,7 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 
 	// Check required tokens
 	if opt.JSToken == "" || opt.BDSToken == "" || opt.Cookie == "" {
-		return nil, fmt.Errorf("TeraBox requires JSToken, BDSToken, and Cookie to be set")
+		return nil, fmt.Errorf("TeraBox requires JSToken, BDSTOKEN, and Cookie to be set")
 	}
 
 	// Create HTTP client with proper timeouts
@@ -809,38 +809,20 @@ func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options .
 	}
 	fullPath += remote
 
-	// Check if file already exists and compare metadata
+	// Check if file already exists and compare size only
+	fs.Debugf(f, "Checking existence of remote file: %s", remote)
 	existingObj, err := f.NewObject(ctx, remote)
 	if err == nil {
-		// File exists, check if it needs to be updated
 		existingSize := existingObj.Size()
-		existingModTime := existingObj.ModTime(ctx)
-		srcModTime := src.ModTime(ctx)
-
-		// If size and modification time match, skip upload
-		if existingSize == fileSize && existingModTime.Equal(srcModTime) {
-			fmt.Printf("DEBUG: File %s unchanged (size: %d, modTime: %s), skipping upload\n",
-				remote, fileSize, srcModTime.Format(time.RFC3339))
+		if existingSize == fileSize {
+			fs.Debugf(f, "Skipping upload for %s: size unchanged (%d bytes)", remote, fileSize)
 			return existingObj, nil
 		}
-
-		fmt.Printf("DEBUG: File %s changed (existing: size=%d, modTime=%s; new: size=%d, modTime=%s), uploading\n",
-			remote, existingSize, existingModTime.Format(time.RFC3339), fileSize, srcModTime.Format(time.RFC3339))
-
-		// Clean up existing files and timestamped versions
-		if err := f.cleanupExistingFiles(ctx, remote, fullPath); err != nil {
-			// Always fail the upload if cleanup fails to prevent duplicates
-			return nil, fmt.Errorf("failed to cleanup existing files for %s: %v (upload aborted to prevent duplicates)", remote, err)
-		}
+		fs.Debugf(f, "Remote file %s exists but size changed (remote: %d, local: %d), uploading", remote, existingSize, fileSize)
 	} else if err == fs.ErrorObjectNotFound {
-		// File doesn't exist, proceed with upload
-		fmt.Printf("DEBUG: File %s does not exist, uploading\n", remote)
-	} else if fserrors.IsRetryError(err) {
-		// Retryable error (like network issues), log it but continue with upload
-		fmt.Printf("DEBUG: Retryable error checking existing file %s: %v, proceeding with upload\n", remote, err)
+		fs.Debugf(f, "Remote file %s not found, will upload", remote)
 	} else {
-		// Some other error occurred, log it but continue with upload
-		fmt.Printf("DEBUG: Error checking existing file %s: %v, proceeding with upload\n", remote, err)
+		fs.Debugf(f, "Error checking remote file %s: %v, will upload", remote, err)
 	}
 
 	// Ensure parent directory exists

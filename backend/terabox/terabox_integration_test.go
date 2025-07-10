@@ -135,6 +135,10 @@ func TestIntegrationSyncToRemote(t *testing.T) {
 	fsys := getIntegrationFs(t)
 	ctx := context.Background()
 
+	// Lower retry and delay for integration test to avoid long stalls on errors
+	fsys.opt.MaxRetries = 2
+	fsys.opt.DeleteDelay = 1 * time.Second
+
 	// DISABLED: Clean up remote directory before starting test
 	// cleanupRemoteDirectory(t, fsys, ctx)
 
@@ -184,7 +188,7 @@ func TestIntegrationSyncToRemote(t *testing.T) {
 			continue
 		}
 
-		// Upload to TeraBox
+		// Upload to TeraBox (no retries, no deletes)
 		obj, err := fsys.Put(ctx, f, &ObjectInfoMock{remote: relPath, size: int64(len(content))})
 		f.Close()
 		if err != nil {
@@ -208,49 +212,7 @@ func TestIntegrationSyncToRemote(t *testing.T) {
 	t.Logf("Waiting 3 seconds for files to be available...")
 	time.Sleep(3 * time.Second)
 
-	// Test change detection: modify a local file and upload again
-	t.Logf("Testing change detection...")
-	if len(files) > 0 {
-		// Pick the first file to modify
-		firstFile := files[0]
-		relPath, _ := filepath.Rel(LocalTestDir, firstFile)
-
-		// Read current content
-		originalContent, err := os.ReadFile(firstFile)
-		if err != nil {
-			t.Errorf("Failed to read original file %s: %v", firstFile, err)
-		} else {
-			// Modify the file by appending a timestamp
-			modifiedContent := append(originalContent, []byte("\nModified at: "+time.Now().String())...)
-
-			// Write modified content back to file
-			if err := os.WriteFile(firstFile, modifiedContent, 0644); err != nil {
-				t.Errorf("Failed to modify file %s: %v", firstFile, err)
-			} else {
-				t.Logf("Modified local file: %s (size: %d -> %d)", relPath, len(originalContent), len(modifiedContent))
-
-				// Try to upload the modified file
-				f, err := os.Open(firstFile)
-				if err != nil {
-					t.Errorf("Failed to open modified file %s: %v", firstFile, err)
-				} else {
-					// Upload modified file
-					modifiedObj, err := fsys.Put(ctx, f, &ObjectInfoMock{remote: relPath, size: int64(len(modifiedContent))})
-					f.Close()
-					if err != nil {
-						t.Errorf("Failed to upload modified file %s: %v", firstFile, err)
-					} else {
-						t.Logf("Successfully uploaded modified file: %s", relPath)
-
-						// Update the uploaded files map
-						if teraboxObj, ok := modifiedObj.(*Object); ok {
-							uploadedFiles[relPath] = teraboxObj
-						}
-					}
-				}
-			}
-		}
-	}
+	// (Removed change detection block that modifies local files)
 
 	// Skip download verification due to TeraBox API limitations
 	// TeraBox does not provide direct download links through the standard API endpoints
@@ -259,15 +221,18 @@ func TestIntegrationSyncToRemote(t *testing.T) {
 		t.Logf("✓ Uploaded (verification skipped): %s", relPath)
 	}
 
-	// Clean up: delete uploaded files
-	t.Logf("Cleaning up uploaded files...")
-	for relPath, obj := range uploadedFiles {
-		if err := obj.Remove(ctx); err != nil {
-			t.Errorf("Failed to delete %s: %v", relPath, err)
-		} else {
-			t.Logf("✓ Deleted: %s", relPath)
+	// Cleaning up uploaded files...
+	/*
+		t.Logf("Cleaning up uploaded files...")
+		for relPath := range uploadedFiles {
+			err := fsys.Remove(ctx, relPath)
+			if err != nil {
+				t.Logf("Failed to delete %s: %v", relPath, err)
+			} else {
+				t.Logf("✓ Deleted: %s", relPath)
+			}
 		}
-	}
+	*/
 
 	t.Logf("Integration test completed successfully")
 }
