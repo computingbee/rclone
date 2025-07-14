@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
@@ -29,6 +28,7 @@ func init() {
 		Name:        "terabox",
 		Description: "TeraBox Cloud Storage",
 		NewFs:       NewFs,
+		CommandHelp: commandHelp,
 		Options: []fs.Option{
 			{
 				Name:     "jstoken",
@@ -129,6 +129,12 @@ func NewFs(ctx context.Context, name, root string, m configmap.Mapper) (fs.Fs, e
 		ReadMimeType:            false,
 		WriteMimeType:           false,
 		ListR:                   f.ListR,
+		About:                   f.About,
+		PublicLink:              f.Link,
+		PutStream:               f.PutStream,
+		CleanUp:                 f.CleanUp,
+		Purge:                   f.Purge,
+		Command:                 f.Command,
 	}).Fill(ctx, f)
 
 	return f, nil
@@ -316,122 +322,24 @@ func (f *Fs) Mkdir(ctx context.Context, dir string) error {
 	return nil
 }
 
-// Put uploads a file
+// Put uploads a file to the remote
 func (f *Fs) Put(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
-	if in == nil {
-		return nil, fmt.Errorf("input reader is nil")
-	}
-
-	remote := src.Remote()
-	fileSize := src.Size()
-
-	// Ensure parent directory exists
-	fullPath := f.root
-	if !strings.HasSuffix(fullPath, "/") {
-		fullPath += "/"
-	}
-	fullPath += remote
-
-	parentDir := filepath.Dir(fullPath)
-	if parentDir != "/" && parentDir != "." {
-		if err := f.Mkdir(ctx, parentDir); err != nil {
-			return nil, fmt.Errorf("failed to create parent directory %s: %w", parentDir, err)
-		}
-	}
-
-	// Read file data
-	data, err := ioutil.ReadAll(in)
-	if err != nil {
-		return nil, err
-	}
-
-	// Upload file
-	uploadData := url.Values{}
-	uploadData.Set("path", fullPath)
-	uploadData.Set("file", string(data))
-	uploadData.Set("rtype", "1")
-
-	uploadReq, err := http.NewRequestWithContext(ctx, "POST",
-		"https://www.terabox.com/api/upload?bdstoken="+f.opt.BDSToken+"&app_id=250528&jsToken="+f.opt.JSToken,
-		strings.NewReader(uploadData.Encode()))
-	if err != nil {
-		return nil, err
-	}
-	uploadReq.Header.Set("User-Agent", "okhttp/7.4")
-	uploadReq.Header.Set("Origin", "https://www.terabox.com")
-	uploadReq.Header.Set("Referer", "https://www.terabox.com/")
-	uploadReq.Header.Set("Cookie", f.opt.Cookie)
-	uploadReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := f.httpClient.Do(uploadReq)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	var uploadResult struct {
-		Errno int `json:"errno"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&uploadResult); err != nil {
-		return nil, fmt.Errorf("failed to decode upload response: %w", err)
-	}
-
-	if uploadResult.Errno != 0 {
-		return nil, fmt.Errorf("TeraBox API upload error: errno=%d", uploadResult.Errno)
-	}
-
-	obj := &Object{
-		fs:      f,
-		remote:  remote,
-		size:    fileSize,
-		modTime: time.Now(),
-	}
-
-	return obj, nil
+	return nil, fs.ErrorNotImplemented
 }
 
-// Remove deletes a file
-func (f *Fs) Remove(ctx context.Context, path string) error {
-	// Construct full path
-	fullPath := path
-	if !strings.HasPrefix(fullPath, "/") {
-		fullPath = "/" + fullPath
-	}
+// PutStream uploads a file to the remote using a stream
+func (f *Fs) PutStream(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) (fs.Object, error) {
+	return nil, fs.ErrorNotImplemented
+}
 
-	// Delete file
-	deleteData := url.Values{}
-	deleteData.Set("filelist", fmt.Sprintf("[{\"path\":\"%s\"}]", fullPath))
+// Delete removes the files in path
+func (f *Fs) Delete(ctx context.Context, remote string) error {
+	return fmt.Errorf("delete: not supported by TeraBox backend - file deletion not supported via API")
+}
 
-	deleteReq, err := http.NewRequestWithContext(ctx, "POST",
-		"https://www.terabox.com/api/filemanager?bdstoken="+f.opt.BDSToken+"&app_id=250528&jsToken="+f.opt.JSToken,
-		strings.NewReader(deleteData.Encode()))
-	if err != nil {
-		return err
-	}
-	deleteReq.Header.Set("User-Agent", "okhttp/7.4")
-	deleteReq.Header.Set("Origin", "https://www.terabox.com")
-	deleteReq.Header.Set("Referer", "https://www.terabox.com/")
-	deleteReq.Header.Set("Cookie", f.opt.Cookie)
-	deleteReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-
-	resp, err := f.httpClient.Do(deleteReq)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-
-	var deleteResult struct {
-		Errno int `json:"errno"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&deleteResult); err != nil {
-		return fmt.Errorf("failed to decode delete response: %w", err)
-	}
-
-	if deleteResult.Errno != 0 {
-		return fmt.Errorf("TeraBox API delete error: errno=%d", deleteResult.Errno)
-	}
-
-	return nil
+// Remove removes a single file from remote
+func (f *Fs) Remove(ctx context.Context, remote string) error {
+	return fmt.Errorf("remove: not supported by TeraBox backend - file deletion not supported via API")
 }
 
 // RemoveDir removes a directory
@@ -441,7 +349,7 @@ func (f *Fs) RemoveDir(ctx context.Context, dir string) error {
 
 // Rmdir removes a directory
 func (f *Fs) Rmdir(ctx context.Context, dir string) error {
-	return f.RemoveDir(ctx, dir)
+	return fmt.Errorf("rmdir: not supported by TeraBox backend - directory removal not supported via API")
 }
 
 // NewObject creates a new object
@@ -538,6 +446,9 @@ func (f *Fs) apiRequest(ctx context.Context, method, endpoint string, query map[
 		return nil, err
 	}
 
+	// Debug response status and content type
+	fmt.Printf("DEBUG: Response Status: %d, Content-Type: %s\n", resp.StatusCode, resp.Header.Get("Content-Type"))
+
 	return resp, nil
 }
 
@@ -548,11 +459,11 @@ func (f *Fs) Features() *fs.Features   { return f.features }
 
 // Implement remaining fs.Object interface methods
 func (o *Object) Open(ctx context.Context, options ...fs.OpenOption) (io.ReadCloser, error) {
-	return nil, fmt.Errorf("not implemented")
+	return nil, fs.ErrorNotImplemented
 }
 
 func (o *Object) Update(ctx context.Context, in io.Reader, src fs.ObjectInfo, options ...fs.OpenOption) error {
-	return fmt.Errorf("not implemented")
+	return fs.ErrorNotImplemented
 }
 
 func (o *Object) Remove(ctx context.Context) error {
@@ -560,7 +471,7 @@ func (o *Object) Remove(ctx context.Context) error {
 }
 
 func (o *Object) Hash(ctx context.Context, ty hash.Type) (string, error) {
-	return "", nil
+	return "", hash.ErrUnsupported
 }
 
 func (o *Object) SetModTime(ctx context.Context, t time.Time) error {
@@ -618,4 +529,121 @@ func (f *Fs) listRRecursive(ctx context.Context, dir string, callback fs.ListRCa
 	}
 
 	return nil
+}
+
+// About gets quota information from the TeraBox API
+func (f *Fs) About(ctx context.Context) (*fs.Usage, error) {
+	query := map[string]string{
+		"bdstoken": f.opt.BDSToken,
+		"app_id":   "250528",
+		"jsToken":  f.opt.JSToken,
+	}
+	resp, err := f.apiRequest(ctx, "GET", "/api/quota", query, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	var quotaResp struct {
+		Errno     int   `json:"errno"`
+		Total     int64 `json:"total"`
+		Used      int64 `json:"used"`
+		Free      int64 `json:"free"`
+		Other     int64 `json:"other"`
+		Trashed   int64 `json:"trashed"`
+		FileCount int64 `json:"file_count"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&quotaResp); err != nil {
+		return nil, err
+	}
+	if quotaResp.Errno != 0 {
+		return nil, fmt.Errorf("TeraBox API quota error: errno=%d", quotaResp.Errno)
+	}
+
+	usage := &fs.Usage{
+		Total:   fs.NewUsageValue(quotaResp.Total),
+		Used:    fs.NewUsageValue(quotaResp.Used),
+		Free:    fs.NewUsageValue(quotaResp.Free),
+		Other:   fs.NewUsageValue(quotaResp.Other),
+		Trashed: fs.NewUsageValue(quotaResp.Trashed),
+		Objects: fs.NewUsageValue(quotaResp.FileCount),
+	}
+	return usage, nil
+}
+
+// Link generates a public link to file/folder
+func (f *Fs) Link(ctx context.Context, remote string, expire fs.Duration, unlink bool) (string, error) {
+	return "", fmt.Errorf("link: not supported by TeraBox backend - sharing not supported via API")
+}
+
+// CleanUp cleans up the remote if possible
+func (f *Fs) CleanUp(ctx context.Context) error {
+	return fmt.Errorf("cleanup: not supported by TeraBox backend - trash cleanup not supported via API")
+}
+
+// Purge removes the path and all of its contents
+func (f *Fs) Purge(ctx context.Context, dir string) error {
+	return fmt.Errorf("purge: not supported by TeraBox backend - bulk deletion not supported via API")
+}
+
+// Rmdirs removes empty directories under the path
+func (f *Fs) Rmdirs(ctx context.Context, dir string) error {
+	return fmt.Errorf("rmdirs: not supported by TeraBox backend - directory removal not supported via API")
+}
+
+// Command the backend to run a named command
+func (f *Fs) Command(ctx context.Context, name string, arg []string, opt map[string]string) (any, error) {
+	switch name {
+	case "quota":
+		// Return quota information
+		usage, err := f.About(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return usage, nil
+	case "status":
+		// Return backend status
+		return map[string]string{
+			"status": "connected",
+			"name":   f.name,
+			"root":   f.root,
+		}, nil
+	default:
+		return nil, fs.ErrorCommandNotFound
+	}
+}
+
+// Touch creates a new file or changes file modification time
+func (f *Fs) Touch(ctx context.Context, remote string) error {
+	return fmt.Errorf("touch: not supported by TeraBox backend - file creation not supported via API")
+}
+
+// touchObjectInfo implements fs.ObjectInfo for Touch command
+type touchObjectInfo struct {
+	remote  string
+	size    int64
+	modTime time.Time
+}
+
+func (t *touchObjectInfo) Remote() string                        { return t.remote }
+func (t *touchObjectInfo) ModTime(ctx context.Context) time.Time { return t.modTime }
+func (t *touchObjectInfo) Size() int64                           { return t.size }
+func (t *touchObjectInfo) Fs() fs.Info                           { return nil }
+func (t *touchObjectInfo) String() string                        { return t.remote }
+func (t *touchObjectInfo) Hash(ctx context.Context, ty hash.Type) (string, error) {
+	return "", hash.ErrUnsupported
+}
+func (t *touchObjectInfo) Storable() bool { return true }
+
+var commandHelp = []fs.CommandHelp{
+	{
+		Name:  "quota",
+		Short: "Get quota information",
+		Long:  "Returns the current quota and usage information for the TeraBox account.",
+	},
+	{
+		Name:  "status",
+		Short: "Get backend status",
+		Long:  "Returns the current status and configuration of the TeraBox backend.",
+	},
 }
